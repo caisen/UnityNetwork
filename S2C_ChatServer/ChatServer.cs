@@ -6,6 +6,15 @@ using MonoLightTech.UnityNetwork.S2C;
 
 internal static class ChatServer
 {
+    private enum Command
+    {
+        Unknown = 0,
+        PublicMessage = 1,
+        PrivateMessage = 2,
+        Time = 3,
+        Clients = 4
+    }
+
     private static Server _server;
 
     private static void Main()
@@ -27,9 +36,11 @@ internal static class ChatServer
         _server.Initialize();
 
         Console.WriteLine("Press [ESC] to terminate.");
-        while (Console.ReadKey().Key != ConsoleKey.Escape) { }
+        while (Console.ReadKey(true).Key != ConsoleKey.Escape)
+        {
+        }
+        
         Console.WriteLine("Terminating...");
-
         _server.Terminate();
     }
 
@@ -94,6 +105,81 @@ internal static class ChatServer
     {
         Console.WriteLine("Data => [IPEndPoint: " + connection.IPEndPoint + "] [Username: " + connection.Packet.GetString("Username") + "] [Delivery: " + delivery + "] [Channel: " + channel + "]");
         Console.WriteLine(packet);
+
+        switch ((Command)packet.GetByte("Command"))
+        {
+            default:
+                {
+                }
+                return;
+            case Command.PublicMessage:
+                {
+                    string message = packet.GetString("Message");
+
+                    if (string.IsNullOrEmpty(message))
+                    {
+                        return;
+                    }
+
+                    Packet messagePacket = new Packet();
+                    messagePacket.SetByte("Command", (byte)Command.PublicMessage);
+                    messagePacket.SetString("From", message);
+                    messagePacket.SetString("Message", message);
+
+                    _server.SendToAll(Delivery.ReliableOrdered, messagePacket);
+                }
+                return;
+            case Command.PrivateMessage:
+                {
+                    string message = packet.GetString("Message");
+
+                    if (string.IsNullOrEmpty(message))
+                    {
+                        return;
+                    }
+
+                    string targetUsername = packet.GetString("Target");
+                    Connection targetConnection = _server.Connections.FirstOrDefault(x => x.Packet.GetString("Username").ToUpper().Equals(targetUsername.ToUpper()));
+
+                    if (targetConnection == null)
+                    {
+                        return;
+                    }
+
+                    Packet messagePacket = new Packet();
+                    messagePacket.SetByte("Command", (byte)Command.PrivateMessage);
+                    messagePacket.SetString("From", message);
+                    messagePacket.SetString("Message", message);
+
+                    _server.SendTo(targetConnection, Delivery.ReliableOrdered, messagePacket);
+                }
+                return;
+            case Command.Time:
+                {
+                    Packet timePacket = new Packet();
+                    timePacket.SetByte("Command", (byte)Command.Time);
+                    timePacket.SetString("Time", "Time is " + DateTime.Now.ToString());
+
+                    _server.SendTo(connection, Delivery.ReliableSequenced, timePacket);
+                }
+                return;
+            case Command.Clients:
+                {
+                    Connection[] connections = _server.Connections;
+
+                    Packet clientsPacket = new Packet();
+                    clientsPacket.SetByte("Command", (byte)Command.Clients);
+                    clientsPacket.SetByte("Length", (byte)connections.Length);
+
+                    for (int i = 0; i < connections.Length; i++)
+                    {
+                        clientsPacket.SetString("Client" + i, connections[i].Packet.GetString("Username"));
+                    }
+
+                    _server.SendTo(connection, Delivery.ReliableOrdered, clientsPacket);
+                }
+                return;
+        }
     }
 
     private static void _HandleForeignData(IPEndPoint ipEndPoint, byte[] data)
